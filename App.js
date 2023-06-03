@@ -8,6 +8,7 @@ import Registration from "./screens/Registration";
 import Guest from "./screens/Guest";
 import {View} from "react-native";
 import Dashboard from "./components/Dashboard";
+import {initiateDeviceID} from "./src/deviceIDManager";
 
 const Stack = createNativeStackNavigator();
 
@@ -22,6 +23,8 @@ function App() {
     }
 
     useEffect(() => {
+        initiateDeviceID();
+
         const subscriber = firebase.auth().onAuthStateChanged(onAuthStateChanged);
         return subscriber;
     }, []);
