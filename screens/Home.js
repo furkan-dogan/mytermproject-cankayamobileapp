@@ -1,35 +1,92 @@
 import {View, Text, SafeAreaView, Linking, TextInput, StyleSheet, TouchableOpacity} from "react-native";
-import React, { useState } from "react";
+import React, {useEffect, useState} from "react";
+import {useNavigation} from "@react-navigation/native";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+
 import BackgroundAnimation from "../components/BackgroundAnimation";
 import Logo from "../components/Logo";
-import { useNavigation } from "@react-navigation/native";
-import { firebase } from "../config";
-import Registration from "./Registration";
-import {cankayaYellow} from "../src/constants";
+
+import {firebaseAuth} from "../src/utils/firebaseHelper";
+
+import {checkLecturer, checkStudent, findUserByEmailAndPassword} from "../src/firestoreQueries";
+import {useUser} from "../src/context";
 
 const Home = (props) => {
     const navigation = useNavigation();
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-
-    let loginUser;
-    loginUser = async () => {
-        try {
-            await firebase.auth().signInWithEmailAndPassword(email, password);
-        } catch (error) {
-            alert(error.message);
-        }
-    };
+    const [waitForVerification, setWaitForVerification] = useState();
+    const [userInFirebaseAuth, setUserInFirebaseAuth] = useState();
+    const {user, setUser} = useUser();
 
     //forget password
     const forgetPassword = () => {
-        firebase.auth().sendPasswordResetEmail(email)
+        firebaseAuth.sendPasswordResetEmail(email)
             .then(() => {
                 alert("Password reset email sent")
             }).catch((error) => {
             alert(error)
         })
     }
+
+    const handleLogin = async () => {
+        const userDB_ = await findUserByEmailAndPassword({ email, password });
+        setUser(userDB_);
+
+        let userCredentialsFirebaseAuth;
+        try {
+            userCredentialsFirebaseAuth = await signInWithEmailAndPassword(firebaseAuth, email, password);
+        } catch (e) {
+            if(e.code === "auth/user-not-found") {
+                console.warn(`${email} user not found in Firebase Auth. Creating the user on Firebase Auth...`);
+                userCredentialsFirebaseAuth = await createUserWithEmailAndPassword(firebaseAuth, email, password);
+            } else {
+                throw e;
+            }
+        }
+
+        setUserInFirebaseAuth(userCredentialsFirebaseAuth.user);
+
+        if (!userCredentialsFirebaseAuth.user.emailVerified) {
+            await sendEmailVerification(userCredentialsFirebaseAuth.user);
+            setWaitForVerification(true);
+            return props.navigation.navigate("Login");
+        }
+
+        return props.navigation.navigate("Guest");
+    };
+
+    const deviceCheck = async () => {
+        const isStudent = await checkStudent({ userID: user.id });
+
+        if (isStudent) {
+            // const deviceUniqueID = await getUniqueId();
+            console.log("device check...");
+            // console.log("device id", deviceUniqueID);
+        }
+
+        props.navigation.navigate("Guest");
+    };
+
+    useEffect(() => {
+        if (waitForVerification && userInFirebaseAuth) {
+            const interval = setInterval(async () => {
+                await userInFirebaseAuth.reload();
+
+                const newUser = firebaseAuth.currentUser;
+
+                if (newUser.emailVerified) {
+                    clearInterval(interval);
+                    setWaitForVerification(false);
+                    setUserInFirebaseAuth({...newUser.toJSON()});
+                    setUser({...user, emailVerified: true});
+                    deviceCheck();
+                }
+            }, 2000);
+
+            return () => clearInterval(interval);
+        }
+    }, [waitForVerification, userInFirebaseAuth])
 
     return (
         <>
@@ -44,6 +101,7 @@ const Home = (props) => {
                                    onChangeText={(email) => setEmail(email)}
                                    autoCapitalize="none"
                                    autoCorrect={false}/>
+
                         <TextInput style={styles.input}
                                    placeholder="password"
                                    placeholderTextColor="black"
@@ -54,46 +112,46 @@ const Home = (props) => {
                     </View>
 
                     <View style={styles.buttonView}>
+
                         <TouchableOpacity style={styles.button}
-                                          onPress={() => loginUser(email, password)}>
+                                          onPress={() => {
+                                              handleLogin(email, password)
+                                                  .catch((error) => {
+                                                  // If registration fails, handle the error appropriately
+                                                  alert(error.message || error);
+                                              })
+                                          }}
+                        >
                             <Text style={styles.text1}>Login</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={[styles.button2]}
-                                          onPress={() => props.navigation.navigate("Registration")}>
-                            <Text style={styles.text2}>Registration</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.button}
-                                          onPress={() => props.navigation.navigate("Guest")}>
-                            <Text style={styles.text1}>Guest</Text>
-                        </TouchableOpacity>
                         <TouchableOpacity
-                        onPress={() => forgetPassword()}
-                        style={{
-                            backgroundColor: "rgba(255, 255, 255, 0.6)",
-                            borderRadius: 50,
-                            width: 150,
-                            height: 20,
-                            alignItems: "center",
-                            justifyContent: "center",
-                            marginVertical: 5,
-                        }}
+                            onPress={() => forgetPassword()}
+                            style={{
+                                backgroundColor: "rgba(255, 255, 255, 0.6)",
+                                borderRadius: 50,
+                                width: 150,
+                                height: 20,
+                                alignItems: "center",
+                                justifyContent: "center",
+                                marginVertical: 5,
+                            }}
                         >
-                        <Text style={{ fontWeight: "bold", fontSize: 12 }}>Forget Password?</Text>
-                    </TouchableOpacity>
+                            <Text style={{fontWeight: "bold", fontSize: 12}}>Forget Password?</Text>
+                        </TouchableOpacity>
 
                     </View>
                 </View>
                 <View>
                     <View style={styles.backgroundFrame}>
                         <Text style={{color: "black", fontWeight: "bold", fontSize: 13}}>
-                            Çankaya Üniversitesi Öğrenci Webmail Servisi
+                            Cankaya University Student Webmail Service
                         </Text>
                         <Text
                             style={{color: "blue"}}
                             onPress={() => Linking.openURL("https://bim.cankaya.edu.tr/")}
                         >
-                            Destek İsteyin !
+                            Request Support!
                         </Text>
                     </View>
                 </View>
@@ -106,22 +164,22 @@ export default Home;
 
 const styles = StyleSheet.create({
     container: {
-      alignItems: "center",
+        alignItems: "center",
     },
     input: {
         borderRadius: 100,
         color: "black",
-        paddingHorizontal: 10,
+        paddingHorizontal: 20,
         width: 350,
         height: "19%",
         backgroundColor: "rgb(220,220,220)",
-        marginVertical: 5,
+        marginVertical: 10,
     },
     inputView: {
-      marginTop: 40,
+        marginTop: 40,
     },
     button: {
-        backgroundColor: cankayaYellow,
+        backgroundColor: '#E2D102',
         borderRadius: 100,
         alignItems: "center",
         width: 150,
@@ -137,7 +195,7 @@ const styles = StyleSheet.create({
         marginVertical: 5,
     },
     buttonView: {
-      alignItems: "center",
+        alignItems: "center",
     },
     backgroundFrame: {
         backgroundColor: "rgba(255, 255, 255, 0.6)",
@@ -146,7 +204,6 @@ const styles = StyleSheet.create({
         height: 50,
         alignItems: "center",
         justifyContent: "center",
-        marginTop: 55,
     },
     text1: {
         color: 'black',
